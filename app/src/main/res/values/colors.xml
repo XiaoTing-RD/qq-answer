@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#E86A92</color>
+    <color name="brand_dark">#C94F78</color>
+    <color name="brand_soft">#F7A8C0</color>
+    <color name="blush">#FFF3F8</color>
+    <color name="blush_deep">#FFD6E5</color>
+    <color name="ink">#4A2B36</color>
+    <color name="muted">#8A6B76</color>
+    <color name="card">#F0FFFFFF</color>
+    <color name="card_stroke">#40E86A92</color>
+    <color name="track">#66E86A92</color>
+    <color name="ok">#2E8B74</color>
+    <color name="warn">#C2455F</color>
+    <color name="white">#FFFFFF</color>
+</resources>
