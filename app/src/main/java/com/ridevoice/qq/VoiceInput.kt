@@ -14,7 +14,11 @@ import android.speech.SpeechRecognizer
 
 class VoiceInput(private val context: Context) {
 
-    data class Result(val text: String?, val error: Int) {
+    data class Result(
+        val text: String?,
+        val error: Int,
+        val engine: String = "system"
+    ) {
         val ok: Boolean
             get() = !text.isNullOrBlank()
 
@@ -32,6 +36,9 @@ class VoiceInput(private val context: Context) {
         const val ERROR_START = -102
         const val ERROR_EMPTY = -103
         const val ERROR_SILENCE = -104
+        const val ERROR_OFFLINE_MODEL = -110
+        const val ERROR_OFFLINE_INIT = -111
+        const val ERROR_OFFLINE_AUDIO = -112
 
         fun labelFor(error: Int): String = when (error) {
             0 -> "正常"
@@ -53,6 +60,9 @@ class VoiceInput(private val context: Context) {
             ERROR_START -> "语音识别启动失败"
             ERROR_EMPTY -> "识别结果为空"
             ERROR_SILENCE -> "没有听到说话"
+            ERROR_OFFLINE_MODEL -> "离线识别模型加载失败"
+            ERROR_OFFLINE_INIT -> "离线识别初始化失败"
+            ERROR_OFFLINE_AUDIO -> "离线识别录音失败，麦克风可能被占用"
             else -> "未知语音错误($error)"
         }
     }
@@ -88,7 +98,7 @@ class VoiceInput(private val context: Context) {
 
             requestFocus()
             val speech = try {
-                SpeechRecognizer.createSpeechRecognizer(context.applicationContext)
+                SpeechRecognizer.createSpeechRecognizer(context)
             } catch (_: Exception) {
                 finish(null, ERROR_START)
                 return@post
@@ -142,11 +152,9 @@ class VoiceInput(private val context: Context) {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "zh-CN")
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 800L)
-                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
             }
 
             try {

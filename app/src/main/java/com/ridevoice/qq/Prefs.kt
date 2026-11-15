@@ -12,6 +12,12 @@ enum class VoicePreset(val label: String, val pitch: Float, val rate: Float) {
 
 class Prefs(context: Context) {
 
+    companion object {
+        const val ENGINE_AUTO = "auto"
+        const val ENGINE_SYSTEM = "system"
+        const val ENGINE_OFFLINE = "offline"
+    }
+
     private val sp = context.getSharedPreferences("ride_voice", Context.MODE_PRIVATE)
 
     var readGroups: Boolean
@@ -54,6 +60,12 @@ class Prefs(context: Context) {
         get() = sp.getString("last_voice_error", "") ?: ""
         set(value) {
             sp.edit().putString("last_voice_error", value).apply()
+        }
+
+    var voiceEngine: String
+        get() = sp.getString("voice_engine", ENGINE_AUTO) ?: ENGINE_AUTO
+        set(value) {
+            sp.edit().putString("voice_engine", value).apply()
         }
 
     var presetIndex: Int

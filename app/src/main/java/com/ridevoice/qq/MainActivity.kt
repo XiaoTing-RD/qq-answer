@@ -30,7 +30,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: Prefs
     private var speaker: Speaker? = null
     private var musicAlarm: MusicAlarm? = null
-    private var testVoiceInput: VoiceInput? = null
+    private var speechRouter: SpeechRouter? = null
+    private var asrTestRunning = false
     private var updating = false
 
     private val micPermission =
@@ -67,16 +68,23 @@ class MainActivity : AppCompatActivity() {
         prefs = Prefs(this)
         setupUi()
         updateUi()
+        preloadModelIfNeeded()
     }
 
     override fun onResume() {
         super.onResume()
         updateUi()
+        if (prefs.voiceEngine != Prefs.ENGINE_SYSTEM &&
+            !VoskModelHolder.isReady &&
+            !VoskModelHolder.isLoading
+        ) {
+            preloadModelIfNeeded()
+        }
     }
 
     override fun onDestroy() {
-        testVoiceInput?.destroy()
-        testVoiceInput = null
+        speechRouter?.destroy()
+        speechRouter = null
         speaker?.shutdown()
         speaker = null
         musicAlarm?.stop()
@@ -173,6 +181,46 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {
             }
         }
+
+        val engineAdapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            listOf("自动（系统失败用离线）", "系统语音识别", "离线识别（Vosk）")
+        )
+        engineAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.spinnerEngine.adapter = engineAdapter
+        binding.spinnerEngine.setSelection(engineIndex(prefs.voiceEngine), false)
+        binding.spinnerEngine.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: AdapterView<*>?,
+                view: View?,
+                position: Int,
+                id: Long
+            ) {
+                if (updating) return
+                val value = engineValue(position)
+                if (value == prefs.voiceEngine) return
+                prefs.voiceEngine = value
+                SpeechRouter.resetSystemBlock()
+                if (value != Prefs.ENGINE_SYSTEM) preloadModelIfNeeded()
+                updateUi()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {
+            }
+        }
+    }
+
+    private fun engineIndex(value: String): Int = when (value) {
+        Prefs.ENGINE_SYSTEM -> 1
+        Prefs.ENGINE_OFFLINE -> 2
+        else -> 0
+    }
+
+    private fun engineValue(position: Int): String = when (position) {
+        1 -> Prefs.ENGINE_SYSTEM
+        2 -> Prefs.ENGINE_OFFLINE
+        else -> Prefs.ENGINE_AUTO
     }
 
     private fun updateUi() {
@@ -211,22 +259,50 @@ class MainActivity : AppCompatActivity() {
             }
             binding.btnTestMusic.isEnabled = prefs.musicUri.isNotBlank()
             binding.tvQqState.text = if (isQqInstalled()) "已检测到 QQ" else "未检测到 QQ"
+            binding.spinnerEngine.setSelection(engineIndex(prefs.voiceEngine), false)
 
             val asrAvailable = SpeechRecognizer.isRecognitionAvailable(this)
+            val offlineReady = VoskModelHolder.isReady
+            val offlineLoading = VoskModelHolder.isLoading
+            val engine = prefs.voiceEngine
             val voiceState = when {
                 !mic -> "语音识别：需要麦克风权限"
-                !asrAvailable -> "语音识别：不可用"
-                else -> "语音识别：可用"
+                engine == Prefs.ENGINE_SYSTEM ->
+                    if (asrAvailable) "语音识别：系统可用" else "语音识别：系统不可用"
+
+                engine == Prefs.ENGINE_OFFLINE -> when {
+                    offlineReady -> "语音识别：离线已就绪"
+                    offlineLoading -> "语音识别：离线准备中…"
+                    else -> "语音识别：离线未就绪"
+                }
+
+                else -> {
+                    val systemPart = when {
+                        SpeechRouter.systemBlocked -> "系统被拦，用离线"
+                        asrAvailable -> "系统优先"
+                        else -> "系统不可用，用离线"
+                    }
+                    "语音识别：自动（$systemPart）" + when {
+                        offlineLoading -> " · 模型准备中"
+                        offlineReady -> ""
+                        else -> " · 模型未就绪"
+                    }
+                }
+            }
+            val voiceOk = when {
+                !mic -> false
+                engine == Prefs.ENGINE_SYSTEM -> asrAvailable
+                else -> offlineReady || offlineLoading || asrAvailable
             }
             binding.voiceStatus.text = voiceState
             binding.voiceStatus.setTextColor(
-                ContextCompat.getColor(
-                    this,
-                    if (mic && asrAvailable) R.color.ok else R.color.warn
-                )
+                ContextCompat.getColor(this, if (voiceOk) R.color.ok else R.color.warn)
             )
+            val lastError = prefs.lastVoiceError.ifBlank {
+                VoskModelHolder.error ?: ""
+            }
             binding.voiceLastError.text =
-                "最近错误：" + prefs.lastVoiceError.ifBlank { "无" }
+                "最近错误：" + lastError.ifBlank { "无" }
         } finally {
             updating = false
         }
@@ -290,30 +366,46 @@ class MainActivity : AppCompatActivity() {
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            val message = "本机没有可用的语音识别服务"
-            binding.asrResult.text = "失败：$message"
-            prefs.lastVoiceError = message
-            binding.voiceLastError.text = "最近错误：$message"
-            updateUi()
-            return
-        }
-        testVoiceInput?.destroy()
-        val input = VoiceInput(this)
-        testVoiceInput = input
+        if (asrTestRunning) return
+        val router = speechRouter ?: SpeechRouter(this, prefs).also { speechRouter = it }
+        asrTestRunning = true
         binding.btnTestAsr.isEnabled = false
-        binding.asrResult.text = "正在听，请说一句话…"
-        input.listen(15000L) { result ->
+        binding.asrResult.text = "正在准备语音识别…"
+        router.listen(
+            15000L,
+            onStatus = { status -> if (!isFinishing) binding.asrResult.text = status }
+        ) { result ->
             if (isFinishing || isDestroyed) return@listen
+            asrTestRunning = false
             binding.btnTestAsr.isEnabled = true
+            val engineLabel = if (result.engine == "offline") "离线" else "系统"
             if (result.ok) {
-                binding.asrResult.text = "识别成功：${result.text}"
+                binding.asrResult.text = "识别成功（$engineLabel）：${result.text}"
                 prefs.lastVoiceError = ""
             } else {
-                binding.asrResult.text = "失败：${result.label}"
+                binding.asrResult.text = "失败（$engineLabel）：${result.label}"
                 prefs.lastVoiceError = result.label
             }
-            testVoiceInput = null
+            updateUi()
+        }
+    }
+
+    private fun preloadModelIfNeeded() {
+        if (prefs.voiceEngine == Prefs.ENGINE_SYSTEM) return
+        if (VoskModelHolder.isReady || VoskModelHolder.isLoading) return
+        if (!asrTestRunning) {
+            binding.asrResult.text = "正在准备离线识别模型（首次需要几秒）…"
+        }
+        VoskModelHolder.ensure(this) { _, error ->
+            if (isFinishing || isDestroyed) return@ensure
+            if (error != null) {
+                prefs.lastVoiceError = "离线模型：$error"
+                if (!asrTestRunning) {
+                    binding.asrResult.text = "离线模型准备失败：$error"
+                }
+            } else if (!asrTestRunning) {
+                binding.asrResult.text = "离线模型已就绪。点「测试」说一句话。"
+            }
             updateUi()
         }
     }

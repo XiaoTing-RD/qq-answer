@@ -89,7 +89,7 @@ class RideService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private lateinit var prefs: Prefs
     private lateinit var speaker: Speaker
-    private lateinit var voice: VoiceInput
+    private lateinit var speech: SpeechRouter
     private lateinit var musicAlarm: MusicAlarm
     private var tone: ToneGenerator? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -111,7 +111,8 @@ class RideService : Service() {
         prefs = Prefs(this)
         createChannels()
         speaker = Speaker(this)
-        voice = VoiceInput(this)
+        speech = SpeechRouter(this, prefs)
+        speech.preload()
         musicAlarm = MusicAlarm(this)
         tone = runCatching { ToneGenerator(AudioManager.STREAM_MUSIC, 70) }.getOrNull()
         wakeLock = getSystemService(PowerManager::class.java)
@@ -145,7 +146,7 @@ class RideService : Service() {
         queue.clear()
         musicAlarm.stop()
         speaker.shutdown()
-        voice.destroy()
+        speech.destroy()
         tone?.release()
         tone = null
         releaseWake()
@@ -226,10 +227,6 @@ class RideService : Service() {
             failCurrent("麦克风权限被系统收回了，请打开应用重新授权")
             return
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            failCurrent("手机没有可用的语音识别服务，请打开应用看语音自检")
-            return
-        }
         stage = Stage.LISTEN_REPLY
         updateNotification("正在听，请说…")
         val token = ++listenToken
@@ -238,7 +235,12 @@ class RideService : Service() {
                 beep()
                 main.postDelayed({
                     if (stage == Stage.LISTEN_REPLY && token == listenToken) {
-                        voice.listen(15000L) { onReplyHeard(it) }
+                        speech.listen(
+                            15000L,
+                            onStatus = { status ->
+                                if (stage == Stage.LISTEN_REPLY) updateNotification(status)
+                            }
+                        ) { onReplyHeard(it) }
                     }
                 }, 160L)
             }
@@ -305,6 +307,10 @@ class RideService : Service() {
                 result.error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
                 failCurrent("语音识别服务不支持中文，请更换语音服务")
 
+            result.error == VoiceInput.ERROR_OFFLINE_MODEL ||
+                result.error == VoiceInput.ERROR_OFFLINE_INIT ->
+                failCurrent("离线识别不可用：${result.label}，请打开应用自检")
+
             replyAttempts >= 2 ->
                 failCurrent("语音识别失败：${result.label}，请打开应用看语音自检")
 
@@ -319,7 +325,9 @@ class RideService : Service() {
                     SpeechRecognizer.ERROR_SERVER,
                     SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "语音服务连不上，再试一次"
 
-                    SpeechRecognizer.ERROR_AUDIO -> "录音出错了，再试一次"
+                    SpeechRecognizer.ERROR_AUDIO,
+                    VoiceInput.ERROR_OFFLINE_AUDIO -> "录音出错了，再试一次"
+
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "稍等，再试一次"
                     SpeechRecognizer.ERROR_CLIENT -> "系统刚才拦住了语音，再试一次"
                     else -> "语音识别出错了，再试一次"
@@ -358,7 +366,12 @@ class RideService : Service() {
                 beep()
                 main.postDelayed({
                     if (stage == Stage.LISTEN_CONFIRM && token == listenToken) {
-                        voice.listen(12000L) { onConfirmHeard(it) }
+                        speech.listen(
+                            12000L,
+                            onStatus = { status ->
+                                if (stage == Stage.LISTEN_CONFIRM) updateNotification(status)
+                            }
+                        ) { onConfirmHeard(it) }
                     }
                 }, 160L)
             }
@@ -409,6 +422,12 @@ class RideService : Service() {
                 result.error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> {
                 draft = ""
                 failCurrent("语音识别服务不支持中文，已取消发送")
+            }
+
+            result.error == VoiceInput.ERROR_OFFLINE_MODEL ||
+                result.error == VoiceInput.ERROR_OFFLINE_INIT -> {
+                draft = ""
+                failCurrent("离线识别不可用，已取消发送")
             }
 
             else -> retryConfirm()
@@ -482,7 +501,7 @@ class RideService : Service() {
     private fun finishCurrent(say: String?) {
         listenToken++
         musicAlarm.stop()
-        voice.stop()
+        speech.stop()
         releaseWake()
         current = null
         draft = ""
@@ -505,7 +524,7 @@ class RideService : Service() {
         confirmTries = 0
         musicAlarm.stop()
         speaker.stop()
-        voice.stop()
+        speech.stop()
         stage = Stage.SPEAKING
         updateNotification("重听：${message.sender}")
         speakAndThen(readText(message)) {
@@ -517,7 +536,7 @@ class RideService : Service() {
         listenToken++
         musicAlarm.stop()
         speaker.stop()
-        voice.stop()
+        speech.stop()
         releaseWake()
         current = null
         draft = ""

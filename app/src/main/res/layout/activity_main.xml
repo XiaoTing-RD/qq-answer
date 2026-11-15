@@ -284,10 +284,25 @@
                         android:layout_marginTop="14dp"
                         android:background="@color/card_stroke" />
 
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:text="识别引擎"
+                        android:textColor="@color/muted"
+                        android:textSize="11sp" />
+
+                    <Spinner
+                        android:id="@+id/spinner_engine"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:backgroundTint="@color/brand"
+                        android:spinnerMode="dropdown" />
+
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
+                        android:layout_marginTop="4dp"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
 
@@ -330,8 +345,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="失败时：安装/启用 Google 或厂商语音识别服务；把本应用设为无限制后台；麦克风不要选「仅本次」。"
-                        android:textColor="@color/warn"
+                        android:text="自动模式：系统语音被手机拦截时，自动切到离线 Vosk。离线模型随 APK 打包，首次准备需要几秒；识别失败时也会写入「最近错误」。"
+                        android:textColor="@color/muted"
                         android:textSize="11sp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
