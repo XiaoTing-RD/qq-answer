@@ -1,8 +1,12 @@
 package com.ridevoice.qq
 
 import android.app.Notification
+import android.content.ComponentName
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import androidx.core.app.NotificationManagerCompat
 
 class QQListener : NotificationListenerService() {
 
@@ -16,11 +20,26 @@ class QQListener : NotificationListenerService() {
         @Volatile
         var instance: QQListener? = null
             private set
+
+        fun requestRebind(context: android.content.Context) {
+            if (!NotificationManagerCompat.getEnabledListenerPackages(context)
+                    .contains(context.packageName)
+            ) {
+                return
+            }
+            try {
+                NotificationListenerService.requestRebind(
+                    ComponentName(context, QQListener::class.java)
+                )
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private val seen = HashMap<String, Pair<String, Long>>()
     private var connectedAt = 0L
     private val prefs by lazy { Prefs(this) }
+    private val main = Handler(Looper.getMainLooper())
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -30,6 +49,7 @@ class QQListener : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         instance = null
+        main.postDelayed({ requestRebind(this) }, 1500L)
         super.onListenerDisconnected()
     }
 
@@ -67,11 +87,22 @@ class QQListener : NotificationListenerService() {
         if (title == "QQ" && sender == title) return
         if (!isWantedContact(sender, group)) return
 
+        val canReply = notification.actions?.any { action ->
+            action.remoteInputs?.any { it.allowFreeFormInput } == true
+        } == true
+        prefs.lastQqReplyCapable = canReply
+        prefs.lastQqReplyChecked = true
+
         val fingerprint = sender + "\u0001" + text
         val now = System.currentTimeMillis()
         val previous = seen[status.key]
-        if (previous != null && previous.first == fingerprint && now - previous.second < 4000) return
-        seen[status.key] = fingerprint to now
+        if (previous != null &&
+            previous.first == fingerprint &&
+            previous.second == status.postTime
+        ) {
+            return
+        }
+        seen[status.key] = fingerprint to status.postTime
         if (seen.size > 40) {
             seen.entries.removeAll { now - it.value.second > 120_000 }
         }

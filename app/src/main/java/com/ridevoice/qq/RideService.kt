@@ -83,7 +83,7 @@ class RideService : Service() {
     )
 
     private enum class Stage {
-        IDLE, ALERT, SPEAKING, LISTEN_REPLY, LISTEN_CONFIRM, BUSY
+        IDLE, ALERT, SPEAKING, LISTEN_DECISION, LISTEN_REPLY, LISTEN_CONFIRM, BUSY
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -104,11 +104,16 @@ class RideService : Service() {
     private var failedSbn: StatusBarNotification? = null
     private var listenToken = 0
     private var replyAttempts = 0
+    private var decisionTries = 0
+    private var burstReceived = 0
+    private var currentPosition = 0
+    private var currentTotal = 0
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         prefs = Prefs(this)
+        QQListener.requestRebind(this)
         createChannels()
         speaker = Speaker(this)
         speech = SpeechRouter(this, prefs)
@@ -124,6 +129,7 @@ class RideService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                prefs.rideEnabled = false
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -132,7 +138,10 @@ class RideService : Service() {
             ACTION_CANCEL -> cancelByUser()
             ACTION_OPEN_QQ -> openQq()
             ACTION_RETRY_SEND -> retryFailedSend()
-            ACTION_START -> if (stage == Stage.IDLE) updateNotification("已开启，等待 QQ 消息")
+            ACTION_START -> {
+                QQListener.requestRebind(this)
+                if (stage == Stage.IDLE) updateNotification("已开启，等待 QQ 消息")
+            }
         }
         return START_STICKY
     }
@@ -160,15 +169,19 @@ class RideService : Service() {
     fun onQQMessage(sender: String, text: String, group: Boolean, sbn: StatusBarNotification?) {
         main.post {
             if (group && !prefs.readGroups) return@post
-            if (queue.size >= 6) return@post
+            if (queue.size >= 100) return@post
             val cleanText = text.replace(Regex("\\s+"), " ").trim().take(400)
             val cleanSender = sender.replace(Regex("\\s+"), " ").trim().take(40)
             if (cleanText.isEmpty() || cleanSender.isEmpty()) return@post
             if (isEcho(cleanText)) return@post
 
+            if (queue.isEmpty() && current == null) {
+                burstReceived = 0
+            }
+            burstReceived++
             queue.addLast(Incoming(cleanSender, cleanText, group, sbn))
             if (stage == Stage.IDLE) {
-                updateNotification("收到消息，准备朗读")
+                updateNotification("收到 ${queue.size} 条，准备朗读")
                 main.postDelayed({ if (stage == Stage.IDLE) playNext() }, 900)
             } else {
                 updateNotification(currentStatusText())
@@ -181,20 +194,29 @@ class RideService : Service() {
         if (message == null) {
             stage = Stage.IDLE
             current = null
+            burstReceived = 0
+            currentPosition = 0
+            currentTotal = 0
             releaseWake()
             updateNotification("已开启，等待 QQ 消息")
             return
         }
         current = message
+        currentTotal = burstReceived.coerceAtLeast(queue.size + 1)
+        currentPosition = (currentTotal - queue.size).coerceAtLeast(1)
         draft = ""
         contentTries = 0
         confirmTries = 0
         replyAttempts = 0
+        decisionTries = 0
         listenToken++
         wake()
-        if (prefs.musicEnabled && prefs.musicUri.isNotBlank()) {
+        if (prefs.musicEnabled &&
+            prefs.musicUri.isNotBlank() &&
+            currentPosition == 1
+        ) {
             stage = Stage.ALERT
-            updateNotification("提醒音乐：${message.sender}")
+            updateNotification("第 $currentPosition/$currentTotal 条：提醒音乐")
             musicAlarm.play(prefs.musicUri, 6000L) {
                 if (stage == Stage.ALERT) startMessageSpeech(message)
             }
@@ -205,9 +227,9 @@ class RideService : Service() {
 
     private fun startMessageSpeech(message: Incoming) {
         stage = Stage.SPEAKING
-        updateNotification("朗读中：${message.sender}")
+        updateNotification("第 $currentPosition/$currentTotal 条：朗读中")
         speakAndThen(readText(message)) {
-            if (stage == Stage.SPEAKING) startReplyListening()
+            if (stage == Stage.SPEAKING) startDecisionListening()
         }
     }
 
@@ -217,10 +239,42 @@ class RideService : Service() {
         } else {
             message.text
         }
-        return "${message.sender}说：$body。要回就说。"
+        val prefix = if (currentTotal > 1) {
+            "第 $currentPosition 条，共 $currentTotal 条。"
+        } else {
+            ""
+        }
+        return "$prefix${message.sender}说：$body。要回吗？"
     }
 
-    private fun startReplyListening(delayMs: Long = 320L) {
+    private fun startDecisionListening(delayMs: Long = 320L) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            failCurrent("麦克风权限被系统收回了，请打开应用重新授权")
+            return
+        }
+        stage = Stage.LISTEN_DECISION
+        updateNotification("第 $currentPosition/$currentTotal 条：要回吗？")
+        val token = ++listenToken
+        main.postDelayed({
+            if (stage == Stage.LISTEN_DECISION && token == listenToken) {
+                beep()
+                main.postDelayed({
+                    if (stage == Stage.LISTEN_DECISION && token == listenToken) {
+                        speech.listen(
+                            4000L,
+                            onStatus = { status ->
+                                if (stage == Stage.LISTEN_DECISION) updateNotification(status)
+                            }
+                        ) { onDecisionHeard(it) }
+                    }
+                }, 160L)
+            }
+        }, delayMs)
+    }
+
+    private fun startContentListening(delayMs: Long = 320L) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED
         ) {
@@ -228,7 +282,7 @@ class RideService : Service() {
             return
         }
         stage = Stage.LISTEN_REPLY
-        updateNotification("正在听，请说…")
+        updateNotification("正在听内容，请说…")
         val token = ++listenToken
         main.postDelayed({
             if (stage == Stage.LISTEN_REPLY && token == listenToken) {
@@ -236,7 +290,7 @@ class RideService : Service() {
                 main.postDelayed({
                     if (stage == Stage.LISTEN_REPLY && token == listenToken) {
                         speech.listen(
-                            15000L,
+                            12000L,
                             onStatus = { status ->
                                 if (stage == Stage.LISTEN_REPLY) updateNotification(status)
                             }
@@ -245,6 +299,52 @@ class RideService : Service() {
                 }, 160L)
             }
         }, delayMs)
+    }
+
+    private fun onDecisionHeard(result: VoiceInput.Result) {
+        if (stage != Stage.LISTEN_DECISION) return
+        val raw = result.text?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
+        if (raw.isEmpty()) {
+            handleDecisionError(result)
+            return
+        }
+
+        prefs.lastVoiceError = ""
+        val normalized = normalize(raw)
+        if (normalized.isEmpty()) {
+            handleDecisionError(VoiceInput.Result(null, VoiceInput.ERROR_EMPTY))
+            return
+        }
+        if (isNegative(normalized)) {
+            finishCurrent("好，不回")
+            return
+        }
+
+        val content = stripReplyCommand(normalized)
+        if (content.isEmpty() || isDecisionAffirm(normalized)) {
+            askForContent()
+            return
+        }
+
+        draft = content.take(300)
+        askConfirm()
+    }
+
+    private fun askForContent() {
+        contentTries = 0
+        stage = Stage.SPEAKING
+        updateNotification("请说内容")
+        speakAndThen("请说内容") {
+            if (current != null) startContentListening()
+        }
+    }
+
+    private fun isDecisionAffirm(value: String): Boolean {
+        val trimmed = value.trim().trimEnd('的', '吧', '啊', '呀', '呢', '了')
+        return trimmed in setOf(
+            "回", "回复", "要回", "回吧", "要", "嗯", "好", "好的",
+            "行", "可以", "对", "是的", "说吧", "说", "ok"
+        )
     }
 
     private fun onReplyHeard(result: VoiceInput.Result) {
@@ -278,7 +378,7 @@ class RideService : Service() {
             }
             stage = Stage.SPEAKING
             speakAndThen("请说内容") {
-                if (current != null) startReplyListening()
+                if (current != null) startContentListening()
             }
             return
         }
@@ -335,7 +435,38 @@ class RideService : Service() {
                 stage = Stage.SPEAKING
                 updateNotification("${result.label}，重试中…")
                 speakAndThen(prompt) {
-                    if (current != null) startReplyListening()
+                    if (current != null) startContentListening()
+                }
+            }
+        }
+    }
+
+    private fun handleDecisionError(result: VoiceInput.Result) {
+        prefs.lastVoiceError = result.label
+        decisionTries++
+        when {
+            result.silent -> finishCurrent(null)
+            result.error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
+                failCurrent("麦克风权限被拒绝了，请打开应用重新授权")
+
+            result.error == VoiceInput.ERROR_UNAVAILABLE ->
+                failCurrent("手机没有可用的语音识别服务，请打开应用看语音自检")
+
+            result.error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
+                result.error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
+                failCurrent("语音识别服务不支持中文，请更换语音服务")
+
+            result.error == VoiceInput.ERROR_OFFLINE_MODEL ||
+                result.error == VoiceInput.ERROR_OFFLINE_INIT ->
+                failCurrent("离线识别不可用：${result.label}，请打开应用自检")
+
+            decisionTries >= 2 -> finishCurrent("没听清，已跳过")
+
+            else -> {
+                stage = Stage.SPEAKING
+                updateNotification("没听清，要回吗？")
+                speakAndThen("没听清，要回吗？") {
+                    if (current != null) startDecisionListening(280L)
                 }
             }
         }
@@ -368,6 +499,7 @@ class RideService : Service() {
                     if (stage == Stage.LISTEN_CONFIRM && token == listenToken) {
                         speech.listen(
                             12000L,
+                            confirmMode = true,
                             onStatus = { status ->
                                 if (stage == Stage.LISTEN_CONFIRM) updateNotification(status)
                             }
@@ -457,29 +589,32 @@ class RideService : Service() {
         }
         stage = Stage.BUSY
         updateNotification("发送中…")
-        val ok = ReplySender.send(this, message.sbn, text)
-        if (ok) {
+        val result = ReplySender.send(this, message.sbn, text)
+        if (result.success) {
+            prefs.lastSendError = ""
             noteSent(text)
             draft = ""
             finishCurrent("已发送")
         } else {
             failedText = text
             failedSbn = message.sbn
+            prefs.lastSendError = result.reason
             val clipboard = getSystemService(ClipboardManager::class.java)
             runCatching {
                 clipboard?.setPrimaryClip(ClipData.newPlainText("QQ回复", text))
             }
-            notifyFailure("发送失败，内容已保留：$text")
+            notifyFailure("发送失败：${result.reason}。内容已保留：$text", text)
             draft = ""
-            finishCurrent("发送失败，内容已保留，可在通知栏重试，或打开 QQ 手动发送")
+            finishCurrent("发送失败：${result.reason}。内容已保留，可在通知栏重试，或打开QQ粘贴")
         }
     }
 
     private fun retryFailedSend() {
         val text = failedText
         if (text.isEmpty()) return
-        val ok = ReplySender.send(this, failedSbn, text)
-        if (ok) {
+        val result = ReplySender.send(this, failedSbn, text)
+        if (result.success) {
+            prefs.lastSendError = ""
             noteSent(text)
             failedText = ""
             failedSbn = null
@@ -491,9 +626,10 @@ class RideService : Service() {
                 speakAndThen("已发送") { }
             }
         } else {
-            notifyFailure("还是没发出去，请打开 QQ 手动发送：$text")
+            prefs.lastSendError = result.reason
+            notifyFailure("还是没发出去：${result.reason}。内容已保留：$text", text)
             if (stage == Stage.IDLE) {
-                speakAndThen("还是没发出去，请打开 QQ 手动发送") { }
+                speakAndThen("还是没发出去，${result.reason}，内容已保留") { }
             }
         }
     }
@@ -522,13 +658,15 @@ class RideService : Service() {
         listenToken++
         replyAttempts = 0
         confirmTries = 0
+        contentTries = 0
+        decisionTries = 0
         musicAlarm.stop()
         speaker.stop()
         speech.stop()
         stage = Stage.SPEAKING
-        updateNotification("重听：${message.sender}")
+        updateNotification("第 $currentPosition/$currentTotal 条：重听")
         speakAndThen(readText(message)) {
-            if (stage == Stage.SPEAKING) startReplyListening()
+            if (stage == Stage.SPEAKING) startDecisionListening()
         }
     }
 
@@ -572,9 +710,10 @@ class RideService : Service() {
         val message = current
         return when (stage) {
             Stage.IDLE -> "已开启，等待 QQ 消息"
-            Stage.ALERT -> "提醒音乐" + (message?.let { "：${it.sender}" } ?: "")
-            Stage.SPEAKING -> "朗读中" + (message?.let { "：${it.sender}" } ?: "")
-            Stage.LISTEN_REPLY -> "正在听" + (message?.let { "（${it.sender}）" } ?: "")
+            Stage.ALERT -> "第 $currentPosition/$currentTotal 条：提醒音乐"
+            Stage.SPEAKING -> "第 $currentPosition/$currentTotal 条：朗读中"
+            Stage.LISTEN_DECISION -> "第 $currentPosition/$currentTotal 条：要回吗？"
+            Stage.LISTEN_REPLY -> "正在听内容" + (message?.let { "（${it.sender}）" } ?: "")
             Stage.LISTEN_CONFIRM -> "待确认：$draft"
             Stage.BUSY -> "处理中…"
         }
@@ -601,7 +740,7 @@ class RideService : Service() {
             .addAction(0, "停止", serviceIntent(ACTION_STOP, 3))
             .build()
 
-    private fun notifyFailure(text: String) {
+    private fun notifyFailure(text: String, replyText: String) {
         val builder = NotificationCompat.Builder(this, CHANNEL_ALERT)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("回复没有发出")
@@ -610,10 +749,22 @@ class RideService : Service() {
             .setAutoCancel(false)
             .setContentIntent(activityIntent())
             .addAction(0, "重试", serviceIntent(ACTION_RETRY_SEND, 5))
-            .addAction(0, "打开 QQ", serviceIntent(ACTION_OPEN_QQ, 4))
+            .addAction(0, "复制并打开QQ", fallbackIntent(replyText))
         runCatching {
             getSystemService(NotificationManager::class.java)?.notify(ALERT_NOTIF_ID, builder.build())
         }
+    }
+
+    private fun fallbackIntent(text: String): PendingIntent {
+        val intent = Intent(this, FallbackActivity::class.java)
+            .putExtra(FallbackActivity.EXTRA_TEXT, text)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return PendingIntent.getActivity(
+            this,
+            6,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 
     private fun activityIntent(): PendingIntent {

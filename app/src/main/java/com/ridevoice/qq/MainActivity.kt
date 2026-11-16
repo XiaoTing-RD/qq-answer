@@ -23,6 +23,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.ridevoice.qq.databinding.ActivityMainBinding
+import kotlin.random.Random
 
 class MainActivity : AppCompatActivity() {
 
@@ -65,21 +66,31 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        binding.bgFlipper.displayedChild = Random.nextInt(binding.bgFlipper.childCount)
+        binding.bgFlipper.setFlipInterval(12000)
         prefs = Prefs(this)
         setupUi()
         updateUi()
+        ensureMonitoring()
         preloadModelIfNeeded()
     }
 
     override fun onResume() {
         super.onResume()
+        binding.bgFlipper.startFlipping()
         updateUi()
+        ensureMonitoring()
         if (prefs.voiceEngine != Prefs.ENGINE_SYSTEM &&
             !VoskModelHolder.isReady &&
             !VoskModelHolder.isLoading
         ) {
             preloadModelIfNeeded()
         }
+    }
+
+    override fun onPause() {
+        binding.bgFlipper.stopFlipping()
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -236,8 +247,13 @@ class MainActivity : AppCompatActivity() {
             setStatus(binding.micStatus, mic)
             setStatus(binding.notifStatus, notifications)
             setStatus(binding.batteryStatus, battery)
-            binding.serviceStatus.text = if (RideService.instance != null) "运行中" else "未运行"
-            binding.switchActive.isChecked = RideService.instance != null
+            val serviceRunning = RideService.instance != null
+            binding.serviceStatus.text = when {
+                serviceRunning -> "运行中"
+                prefs.rideEnabled -> "正在恢复监听…"
+                else -> "未运行"
+            }
+            binding.switchActive.isChecked = prefs.rideEnabled
             binding.switchGroups.isChecked = prefs.readGroups
             binding.switchOnlyContact.isChecked = prefs.onlyContact
             binding.switchMusic.isChecked = prefs.musicEnabled
@@ -303,6 +319,24 @@ class MainActivity : AppCompatActivity() {
             }
             binding.voiceLastError.text =
                 "最近错误：" + lastError.ifBlank { "无" }
+            binding.sendLastError.text =
+                "最近发送失败：" + prefs.lastSendError.ifBlank { "无" }
+
+            binding.qqReplyStatus.text = when {
+                !prefs.lastQqReplyChecked -> "QQ 直接回复：等待一条 QQ 消息后检测"
+                prefs.lastQqReplyCapable -> "QQ 直接回复：可用"
+                else -> "QQ 直接回复：不可用（QQ 通知可能只能手动发送）"
+            }
+            binding.qqReplyStatus.setTextColor(
+                ContextCompat.getColor(
+                    this,
+                    when {
+                        !prefs.lastQqReplyChecked -> R.color.muted
+                        prefs.lastQqReplyCapable -> R.color.ok
+                        else -> R.color.warn
+                    }
+                )
+            )
         } finally {
             updating = false
         }
@@ -315,6 +349,20 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun ensureMonitoring() {
+        if (!prefs.rideEnabled) return
+        QQListener.requestRebind(this)
+        if (RideService.instance != null) return
+        if (!hasMic()) {
+            binding.serviceStatus.text = "需要麦克风权限"
+            return
+        }
+        val intent = Intent(this, RideService::class.java).setAction(RideService.ACTION_START)
+        runCatching { ContextCompat.startForegroundService(this, intent) }
+        binding.serviceStatus.text = "正在恢复监听…"
+        binding.root.postDelayed({ updateUi() }, 900)
+    }
+
     private fun startRide() {
         if (!hasMic()) {
             updating = true
@@ -323,6 +371,8 @@ class MainActivity : AppCompatActivity() {
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
+        prefs.rideEnabled = true
+        QQListener.requestRebind(this)
         val intent = Intent(this, RideService::class.java).setAction(RideService.ACTION_START)
         ContextCompat.startForegroundService(this, intent)
         binding.serviceStatus.text = "正在启动…"
@@ -333,6 +383,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopRide() {
+        prefs.rideEnabled = false
         val intent = Intent(this, RideService::class.java).setAction(RideService.ACTION_STOP)
         runCatching { startService(intent) }
         binding.serviceStatus.text = "正在停止…"

@@ -29,6 +29,7 @@ class SpeechRouter(
 
     fun listen(
         timeoutMs: Long,
+        confirmMode: Boolean = false,
         onStatus: (String) -> Unit = {},
         onResult: (VoiceInput.Result) -> Unit
     ) {
@@ -36,7 +37,7 @@ class SpeechRouter(
         if (engine == Prefs.ENGINE_OFFLINE ||
             (engine == Prefs.ENGINE_AUTO && systemBlocked)
         ) {
-            offline.listen(timeoutMs, onStatus, onResult)
+            offline.listen(timeoutMs, confirmMode, onStatus, onResult)
             return
         }
 
@@ -44,7 +45,7 @@ class SpeechRouter(
             if (engine == Prefs.ENGINE_AUTO && shouldFallback(result)) {
                 systemBlocked = true
                 onStatus("系统语音被拦，切换离线识别…")
-                offline.listen(timeoutMs, onStatus, onResult)
+                offline.listen(timeoutMs, confirmMode, onStatus, onResult)
             } else {
                 if (result.ok) systemBlocked = false
                 onResult(result)

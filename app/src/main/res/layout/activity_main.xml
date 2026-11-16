@@ -4,12 +4,50 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <ImageView
+    <ViewFlipper
+        android:id="@+id/bg_flipper"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:contentDescription="@null"
-        android:scaleType="centerCrop"
-        android:src="@drawable/bg_sakura" />
+        android:autoStart="false"
+        android:flipInterval="12000"
+        android:inAnimation="@anim/bg_fade_in"
+        android:outAnimation="@anim/bg_fade_out">
+
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop"
+            android:src="@drawable/bg_sakura_1" />
+
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop"
+            android:src="@drawable/bg_sakura_2" />
+
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop"
+            android:src="@drawable/bg_sakura_3" />
+
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop"
+            android:src="@drawable/bg_sakura_4" />
+
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop"
+            android:src="@drawable/bg_sakura_5" />
+    </ViewFlipper>
 
     <com.ridevoice.qq.SakuraView
         android:layout_width="match_parent"
@@ -34,6 +72,9 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                app:drawableEndCompat="@drawable/ic_heart"
+                android:drawablePadding="8dp"
+                app:drawableTint="@color/brand"
                 android:letterSpacing="0.02"
                 android:shadowColor="#B3FFFFFF"
                 android:shadowRadius="8"
@@ -50,6 +91,24 @@
                 android:text="只读林霏 · 语音回复 · 落樱模式"
                 android:textColor="@color/muted"
                 android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="9dp"
+                android:background="@drawable/bg_badge"
+                android:drawablePadding="5dp"
+                android:letterSpacing="0.16"
+                app:drawableStartCompat="@drawable/ic_heart"
+                app:drawableTint="@color/white"
+                android:paddingStart="11dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="11dp"
+                android:paddingBottom="4dp"
+                android:text="SAKURA RIDE"
+                android:textColor="@color/white"
+                android:textSize="9sp"
+                android:textStyle="bold" />
 
             <com.google.android.material.card.MaterialCardView
                 style="@style/Widget.RideVoice.Card"
@@ -78,6 +137,9 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
+                                app:drawableStartCompat="@drawable/ic_heart"
+                                android:drawablePadding="6dp"
+                                app:drawableTint="@color/brand"
                                 android:text="骑行模式"
                                 android:textColor="@color/ink"
                                 android:textSize="21sp"
@@ -141,7 +203,11 @@
                             style="@style/Widget.RideVoice.Button.Small"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="保存" />
+                            android:text="保存"
+                            app:icon="@drawable/ic_heart"
+                            app:iconGravity="textStart"
+                            app:iconPadding="4dp"
+                            app:iconTint="@color/brand_dark" />
                     </LinearLayout>
 
                     <androidx.appcompat.widget.SwitchCompat
@@ -180,6 +246,9 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        app:drawableStartCompat="@drawable/ic_heart"
+                        android:drawablePadding="6dp"
+                        app:drawableTint="@color/brand"
                         android:text="声音与闹铃"
                         android:textColor="@color/ink"
                         android:textSize="16sp"
@@ -205,7 +274,11 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="试听声音" />
+                            android:text="试听声音"
+                            app:icon="@drawable/ic_heart"
+                            app:iconGravity="textStart"
+                            app:iconPadding="5dp"
+                            app:iconTint="@color/white" />
 
                         <Button
                             android:id="@+id/btn_tts_settings"
@@ -320,7 +393,11 @@
                             style="@style/Widget.RideVoice.Button.Small"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="测试" />
+                            android:text="测一测"
+                            app:icon="@drawable/ic_heart"
+                            app:iconGravity="textStart"
+                            app:iconPadding="4dp"
+                            app:iconTint="@color/brand_dark" />
                     </LinearLayout>
 
                     <TextView
@@ -338,6 +415,15 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:text="最近错误：无"
+                        android:textColor="@color/muted"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/send_last_error"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="最近发送失败：无"
                         android:textColor="@color/muted"
                         android:textSize="11sp" />
 
@@ -366,6 +452,9 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        app:drawableStartCompat="@drawable/ic_heart"
+                        android:drawablePadding="6dp"
+                        app:drawableTint="@color/brand"
                         android:text="权限与 QQ"
                         android:textColor="@color/ink"
                         android:textSize="16sp"
@@ -531,6 +620,15 @@
                             android:text="QQ 通知" />
                     </LinearLayout>
 
+                    <TextView
+                        android:id="@+id/qq_reply_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="QQ 直接回复：等待一条 QQ 消息后检测"
+                        android:textColor="@color/muted"
+                        android:textSize="11sp" />
+
                     <androidx.appcompat.widget.SwitchCompat
                         android:id="@+id/switch_groups"
                         android:layout_width="match_parent"
@@ -559,6 +657,9 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        app:drawableStartCompat="@drawable/ic_heart"
+                        android:drawablePadding="6dp"
+                        app:drawableTint="@color/brand"
                         android:text="怎么用"
                         android:textColor="@color/ink"
                         android:textSize="16sp"
@@ -569,7 +670,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
                         android:lineSpacingExtra="4dp"
-                        android:text="来消息会先播放提醒音乐，再读出是谁说了什么。\n听到「滴」后直接说回复内容；不想回就沉默。\n手机复述后说「确认」才会发送。\n发送失败会保留内容，可在通知栏重试。\n\n骑行安全：不要看屏幕；需要手动处理时先靠边停车。"
+                        android:text="连发多条会先存进消息栈，按「第几条/共几条」逐条播报。\n听完后有 4 秒：说「回」再慢慢说内容，或直接说内容；不说就下一条。\n手机复述后说「确认」才会发送。\n发送失败会说原因并保留内容，可重试或复制到 QQ。\n识别失败会自动切离线 Vosk，正常音量说就行。\n\n骑行安全：不要看屏幕；需要手动处理时先靠边停车。"
                         android:textColor="@color/ink"
                         android:textSize="13sp" />
                 </LinearLayout>

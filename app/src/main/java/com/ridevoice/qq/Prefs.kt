@@ -68,6 +68,30 @@ class Prefs(context: Context) {
             sp.edit().putString("voice_engine", value).apply()
         }
 
+    var rideEnabled: Boolean
+        get() = sp.getBoolean("ride_enabled", false)
+        set(value) {
+            sp.edit().putBoolean("ride_enabled", value).apply()
+        }
+
+    var lastSendError: String
+        get() = sp.getString("last_send_error", "") ?: ""
+        set(value) {
+            sp.edit().putString("last_send_error", value).apply()
+        }
+
+    var lastQqReplyChecked: Boolean
+        get() = sp.getBoolean("last_qq_reply_checked", false)
+        set(value) {
+            sp.edit().putBoolean("last_qq_reply_checked", value).apply()
+        }
+
+    var lastQqReplyCapable: Boolean
+        get() = sp.getBoolean("last_qq_reply_capable", false)
+        set(value) {
+            sp.edit().putBoolean("last_qq_reply_capable", value).apply()
+        }
+
     var presetIndex: Int
         get() = sp.getInt("preset_index", 0)
         set(value) {
